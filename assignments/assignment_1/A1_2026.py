@@ -441,8 +441,114 @@ def evolve_population(generation: list, targets: list[nx.DiGraph], selection_met
 
 
 
+
 # ============================================================================ #
-#  6. ENTRY POINT
+#  6. PLOTTING
+# ============================================================================ #
+
+# evolutions is a list containing evolutions, these are lists containing generations(populations), these contain individuals
+
+def plot_means_evolutions(evolutions: list, targets: list[nx.DiGraph], selection_method: int):
+    # Generates a plot of means + std of multiple evolution runs in regards to the average fitness per generation
+    
+    mean_fitness_evolutions = []
+    for evo in evolutions:
+        mean_fitness_of_generations = []
+        for gen in evo:
+            fitness = [fitness_function(x.to_networkx(), targets) for x in gen]
+            mean = mean(fitness)
+            mean_fitness_of_generations.append(mean)
+        mean_fitness_evolutions.append(mean_fitness_of_generations)
+    
+    
+    pad = len(max(mean_fitness_evolutions, key=len))
+    array_fe = np.array([i + [np.nan]*(pad-len(i)) for i in mean_fitness_evolutions])
+    # array_fe = np.array(fitness_evolutions)
+    means = np.nanmean(array_fe, axis=1)
+    std = np.nanstd(array_fe, axis=1, mean=means)
+    
+    stamps = []
+    values = []
+    nan_array_fe = np.isnan(array_fe)
+    for gen in nan_array_fe:
+        if len(gen) != pad:
+            indx = np.where(gen == True)[0][0]
+            stamps.append(indx-1)
+            values.append(means[indx-1])
+
+
+
+    generations = [x for x in range(len(means))]
+    plt.plot(generations, means)
+    plt.fill_between(generations, means+std, means-std, alpha=0.5)
+
+    # plots the breakoff points of evolution runs
+    plt.scatter(stamps, values, c="red")
+
+    plt.xlabel('generation')
+    plt.ylabel('mean fitness (lower is better)')
+
+    if selection_method == 0:
+        plt.title(f"Average mean fitness per gereration over {len(evolutions)} runs using replacement")
+    elif selection_method == 1:
+        plt.title(f"Average mean fitness per gereration over {len(evolutions)} runs using elitism")
+
+    plt.show()
+
+    return None
+
+
+
+def plot_bests_evolutions(evolutions: list, targets: list[nx.DiGraph], selection_method: int):
+    # Generates a plot of means + std of multiple evolution runs in regards to the best fitness per generation
+    
+    fitness_evolutions = []
+    for evo in evolutions:
+        best_fitness_per_generations = []
+        for gen in evo:
+            fitness = [fitness_function(x.to_networkx(), targets) for x in gen]
+            best = min(fitness)
+            best_fitness_per_generations.append(best)
+        fitness_evolutions.append(best_fitness_per_generations)
+
+    pad = len(max(fitness_evolutions, key=len))
+    array_fe = np.array([i + [np.nan]*(pad-len(i)) for i in fitness_evolutions])
+    # array_fe = np.array(fitness_evolutions)
+    means = np.nanmean(array_fe, axis=1)
+    std = np.nanstd(array_fe, axis=1, mean=means)
+
+    stamps = []
+    values = []
+    nan_array_fe = np.isnan(array_fe)
+    for gen in nan_array_fe:
+        if len(gen) != pad:
+            indx = np.where(gen == True)[0][0]
+            stamps.append(indx-1)
+            values.append(means[indx-1])
+
+
+
+    generations = [x for x in range(len(means))]
+    plt.plot(generations, means)
+    plt.fill_between(generations, means+std, means-std, alpha=0.5)
+
+    # plots the breakoff points of evolution runs
+    plt.scatter(stamps, values, c="red")
+
+    plt.xlabel('generation')
+    plt.ylabel('best fitness (lower is better)')
+
+    if selection_method == 0:
+        plt.title(f"Average best fitness per gereration over {len(evolutions)} runs using replacement")
+    elif selection_method == 1:
+        plt.title(f"Average best fitness per gereration over {len(evolutions)} runs using elitism")
+
+    plt.show()
+    
+    return None
+
+# ============================================================================ #
+#  7. ENTRY POINT
 # ============================================================================ #
 
 
@@ -466,6 +572,11 @@ def main() -> None:
         for b in targets[i + 1 :]
     ]
     console.log(f"target spread : mean pairwise distance {np.mean(spread):.2f}")
+
+    # i=0
+    # for t in targets:
+    #     show_body(t, "frame", file_name=f"target_0{i}")
+    #     i+=1
 
     # --- One random body --------------------------------------------------- #
     body = random_body(GENOTYPE, NUM_OF_MODULES)
@@ -498,26 +609,41 @@ def main() -> None:
     pop=generate_population(10)
 
     # print([x[0] for x in pop])
-    i=0
-    for a in pop:
-        b = a.to_networkx()
-        show_body(b, "frame", file_name=f"initial_{i}")
-        i+=1
+    # i=0
+    # for a in pop:
+    #     b = a.to_networkx()
+    #     show_body(b, "frame", file_name=f"initial_{i}")
+    #     i+=1
 
     # tournament_selection(pop, targets, 3)
     new_gen_rep = evolve_population(pop, targets, 0)
     new_gen_eli = evolve_population(pop, targets, 1)
 
-    i=0
-    for a in new_gen_rep:
-        b = a.to_networkx()
-        show_body(b, "frame", file_name=f"replacement_{i}")
-        i+=1
-    i=0
-    for a in new_gen_eli:
-        b = a.to_networkx()
-        show_body(b, "frame", file_name=f"elitism_{i}")
-        i+=1
+    # i=0
+    # for a in new_gen_rep:
+    #     b = a.to_networkx()
+    #     show_body(b, "frame", file_name=f"replacement_{i}")
+    #     i+=1
+    # i=0
+    # for a in new_gen_eli:
+    #     b = a.to_networkx()
+    #     show_body(b, "frame", file_name=f"elitism_{i}")
+    #     i+=1
+
+    pop_2 = generate_population(10)
+    new_gen_rep_2 = evolve_population(pop_2, targets, 0)
+    new_gen_eli_2 = evolve_population(pop_2, targets, 1)
+
+
+    evo_rep_1=[pop, new_gen_rep]
+    evo_rep_2=[pop_2, new_gen_rep_2]
+
+    evo_eli_1=[pop, new_gen_eli]
+    evo_eli_2=[pop_2, new_gen_eli_2]
+
+    plot_bests_evolutions([evo_rep_1, evo_rep_2], targets,0)
+    plot_bests_evolutions([evo_eli_1, evo_eli_2], targets,1)
+
 
 
 if __name__ == "__main__":
