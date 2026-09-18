@@ -59,6 +59,7 @@ from ariel.utils.renderers import single_frame_renderer, video_renderer
 from ariel.utils.video_recorder import VideoRecorder
 
 import ariel.ec.genotypes.tree.operators as op
+from ariel.ec.genotypes.tree.tree_genome import TreeGenome
 
 # Type aliases
 type GenotypeTypes = Literal["nde", "tree"]
