@@ -332,8 +332,9 @@ def show_body(
 
 def generate_population(pop_size: int,):
     population = []
-    for i in range(pop_size):
-        population.append((i, random_tree(max_modules=NUM_OF_MODULES)))
+    for _ in range(pop_size):
+        #Fixed a little bug, tournament selection expects tree genome, not tuple
+        population.append((random_tree(max_modules=NUM_OF_MODULES)))
     return population
 
 def mutation(parent: nx.DiGraph, p: float):
@@ -363,8 +364,32 @@ def tournament_selection(generation: list, targets: list[nx.DiGraph], k: int):
 
 
 
-def replacement_selection(parents: list, children: list):
-    return children
+def replacement_selection(parents: list, children: list, targets: list[nx.DiGraph] | None = None):
+    mu = len(parents)
+
+    if len(children) < mu:
+        raise ValueError("Replacement selection needs number of children >= parents")
+    elif len(children) == mu:
+        return children
+    elif targets is None:
+        return random.sample(children, mu)
+
+    fitness = []
+    for child in children:
+        fitness.append(fitness_function(child.to_networkx(), targets))
+
+    scored = []
+    for i in range(len(fitness)):
+        scored.append((fitness[i], i))
+
+    scored.sort()
+
+    survivors = []
+    for i in range(mu):
+        fittest_index = scored[i][1]
+        survivors.append(children[fittest_index])
+
+    return survivors
 
 def elitism_selection(parents: list, children: list, targets: list[nx.DiGraph], s: int):
     # Combines the previous generation and its children and takes s of the ones with the 
@@ -373,7 +398,8 @@ def elitism_selection(parents: list, children: list, targets: list[nx.DiGraph], 
     parent_child = parents.copy()
     parent_child.extend(children)
     parent_child_fitness = [fitness_function(x.to_networkx(), targets) for x in parent_child]
-    parent_child_sorted = [x for _, x in sorted(zip(parent_child_fitness, parent_child))]
+    #Another small edge-case fix, comparison wouldn't work if fitness was to be equal
+    parent_child_sorted = [x for _, x in sorted(zip(parent_child_fitness, parent_child), key=lambda pair: pair[0])]
     new_generation = parent_child_sorted[:s]
     others = random.sample(parent_child_sorted[s:], len(parents)-s)
     new_generation.extend(others)
@@ -388,7 +414,8 @@ def evolve_population(generation: list, targets: list[nx.DiGraph], selection_met
 
     children = []
 
-    for _ in range(int(len(generation)/2)):
+    #Fixed the edge case for odd population sizes
+    for _ in range(int(len(generation) + 1 // 2)):
         parent_1 = tournament_selection(generation, targets, k)
         parent_2 = tournament_selection(generation, targets, k)
 
@@ -400,6 +427,8 @@ def evolve_population(generation: list, targets: list[nx.DiGraph], selection_met
         children.append(child_1)
         children.append(child_2)
 
+    #Edge case with odd population sizes
+    children = children[:len(generation)]
     if selection_method == 0:
         new_generation = children
         return new_generation
