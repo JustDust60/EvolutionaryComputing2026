@@ -442,6 +442,7 @@ def evolve_population(generation: list, targets: list[nx.DiGraph], selection_met
 
 
 
+
 # ============================================================================ #
 #  6. PLOTTING
 # ============================================================================ #
@@ -456,7 +457,7 @@ def plot_means_evolutions(evolutions: list, targets: list[nx.DiGraph], selection
         mean_fitness_of_generations = []
         for gen in evo:
             fitness = [fitness_function(x.to_networkx(), targets) for x in gen]
-            mean = mean(fitness)
+            mean = np.mean(fitness)
             mean_fitness_of_generations.append(mean)
         mean_fitness_evolutions.append(mean_fitness_of_generations)
     
@@ -643,6 +644,8 @@ def main() -> None:
 
     plot_bests_evolutions([evo_rep_1, evo_rep_2], targets,0)
     plot_bests_evolutions([evo_eli_1, evo_eli_2], targets,1)
+    plot_means_evolutions([evo_rep_1, evo_rep_2], targets,0)
+    plot_means_evolutions([evo_eli_1, evo_eli_2], targets,1)
 
 
 
