@@ -335,7 +335,6 @@ def generate_population(pop_size: int,):
         population.append((i, random_tree(max_modules=NUM_OF_MODULES)))
     return population
 
-# mutation works
 def mutation(parent: nx.DiGraph, p: float):
     child = copy.deepcopy(parent)
     if random.random() > p:
@@ -343,18 +342,73 @@ def mutation(parent: nx.DiGraph, p: float):
     op.mutate_subtree_replacement(genome=child, max_modules=10)
     return child
 
-# crossover works
 def crossover(parent_1: nx.DiGraph, parent_2: nx.DiGraph, p: float):
     if random.random() > p:
             return parent_1, parent_2
     child_1, child_2 = op.crossover_subtree(parent_1, parent_2)
     return child_1, child_2
 
-def parent_selection():
+def tournament_selection(generation: list, targets: list[nx.DiGraph], k: int):
+    # Randomly select k individuals from population and returns the one with the lowest fitness
+    current_winner = random.choice(generation)
+    fitness_cw = fitness_function(current_winner.to_networkx(), targets)
+    for _ in range(k-1):
+        candidate = random.choice(generation)
+        fitness_can = fitness_function(candidate.to_networkx(), targets)
+        if fitness_can < fitness_cw:
+            fitness_cw = fitness_can
+            current_winner = candidate
+    return current_winner
+
+
+
+def replacement_selection(parents: list, children: list):
+    return children
+
+def elitism_selection(parents: list, children: list, targets: list[nx.DiGraph], s: int):
+    # Combines the previous generation and its children and takes s of the ones with the 
+    # lowest fitness, and randomly selects from the remaining individuals to create the new
+    # generation. 
+    parent_child = parents.copy()
+    parent_child.extend(children)
+    parent_child_fitness = [fitness_function(x.to_networkx(), targets) for x in parent_child]
+    parent_child_sorted = [x for _, x in sorted(zip(parent_child_fitness, parent_child))]
+    new_generation = parent_child_sorted[:s]
+    others = random.sample(parent_child_sorted[s:], len(parents)-s)
+    new_generation.extend(others)
+    return new_generation
+
+def evolve_population(generation: list, targets: list[nx.DiGraph], selection_method: int):
+    # Evolves a generation once using either replacement (0) or elitism (2) as a selection method.
+    s = 2
+    k = 3
+    p_c = 0.5
+    p_m = 0.5
+
+    children = []
+
+    for _ in range(int(len(generation)/2)):
+        parent_1 = tournament_selection(generation, targets, k)
+        parent_2 = tournament_selection(generation, targets, k)
+
+        child_1, child_2 = crossover(parent_1, parent_2, p_c)
+
+        child_1 = mutation(child_1, p_m)
+        child_2 = mutation(child_2, p_m)
+
+        children.append(child_1)
+        children.append(child_2)
+
+    if selection_method == 0:
+        new_generation = children
+        return new_generation
+    elif selection_method == 1:
+        new_generation = elitism_selection(generation, children, targets, s)
+        return new_generation
+
+    
     return None
 
-def survivor_selection():
-    return None
 
 
 # ============================================================================ #
@@ -401,7 +455,7 @@ def main() -> None:
     # gen1 = random_tree(NUM_OF_MODULES)
     # gen2 = random_tree(NUM_OF_MODULES)
     # c1,c2=crossover(gen1,gen2,1)
-    # child = mutation(gen, 1)
+    # # child = mutation(gen, 1)
     # nx.draw(gen1.to_networkx(), with_labels=True)
     # plt.show()
     # nx.draw(c1.to_networkx(), with_labels=True)
@@ -410,13 +464,30 @@ def main() -> None:
     # plt.show()
     # nx.draw(c2.to_networkx(), with_labels=True)
     # plt.show()
+
     pop=generate_population(10)
 
-    print([x[0] for x in pop])
-    for i, a in pop:
+    # print([x[0] for x in pop])
+    i=0
+    for a in pop:
         b = a.to_networkx()
         show_body(b, "frame", file_name=f"initial_{i}")
+        i+=1
 
+    # tournament_selection(pop, targets, 3)
+    new_gen_rep = evolve_population(pop, targets, 0)
+    new_gen_eli = evolve_population(pop, targets, 1)
+
+    i=0
+    for a in new_gen_rep:
+        b = a.to_networkx()
+        show_body(b, "frame", file_name=f"replacement_{i}")
+        i+=1
+    i=0
+    for a in new_gen_eli:
+        b = a.to_networkx()
+        show_body(b, "frame", file_name=f"elitism_{i}")
+        i+=1
 
 
 if __name__ == "__main__":
