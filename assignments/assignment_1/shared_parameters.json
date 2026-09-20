@@ -1,0 +1,6 @@
+{
+  "per_condition": {
+    "replacement": {"k": 5, "p_c": 0.6, "p_m": 0.8, "s": 2},
+    "elitism":     {"k": 5, "p_c": 0.6, "p_m": 0.8, "s": 2}
+  }
+}

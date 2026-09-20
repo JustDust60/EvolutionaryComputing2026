@@ -328,6 +328,63 @@ def show_body(
 # ============================================================================ #
 #  5. Evolutionary Algorithm
 # ============================================================================ #
+#
+# EVALUATION BUDGET
+# -----------------
+# Every genome is scored exactly once and the result memoised. This matters for
+# the comparison in this assignment: elitism carries survivors over unchanged,
+# and tournament selection inspects the same parents repeatedly, so re-running
+# the tree edit distance on them would make "number of fitness evaluations"
+# depend on the selection scheme instead of on the search effort. With the cache
+# in place, one run costs exactly pop_size * (generations + 1) evaluations
+# regardless of the scheme - which is the budget the random-search baseline is
+# given too.
+#
+# ============================================================================ #
+
+_FITNESS_CACHE: dict[str, float] = {}
+_EVAL_COUNT: int = 0
+
+
+def genome_signature(genome: TreeGenome) -> str:
+    """Canonical string key for a tree genome, used to memoise its fitness."""
+    nodes = ";".join(
+        f"{nid}:{attrs['type']}:{attrs['rotation']}"
+        for nid, attrs in sorted(genome.nodes.items())
+    )
+    edges = ";".join(
+        f"{e['parent']}>{e['child']}@{e['face']}"
+        for e in sorted(
+            genome.edges,
+            key=lambda e: (e["parent"], e["child"], e["face"]),
+        )
+    )
+    return nodes + "|" + edges
+
+
+def evaluate(genome: TreeGenome, targets: list[nx.DiGraph]) -> float:
+    """Fitness of one genome, computed once and cached. LOWER IS BETTER."""
+    global _EVAL_COUNT
+    key = genome_signature(genome)
+    cached = _FITNESS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    value = fitness_function(genome.to_networkx(), targets)
+    _FITNESS_CACHE[key] = value
+    _EVAL_COUNT += 1
+    return value
+
+
+def reset_evaluation_budget() -> None:
+    """Clear the fitness cache and counter. Call once at the start of a run."""
+    global _EVAL_COUNT
+    _FITNESS_CACHE.clear()
+    _EVAL_COUNT = 0
+
+
+def evaluations_used() -> int:
+    """How many distinct genomes have been scored since the last reset."""
+    return _EVAL_COUNT
 
 
 def generate_population(pop_size: int,):
@@ -353,10 +410,10 @@ def crossover(parent_1: nx.DiGraph, parent_2: nx.DiGraph, p: float):
 def tournament_selection(generation: list, targets: list[nx.DiGraph], k: int):
     # Randomly select k individuals from population and returns the one with the lowest fitness
     current_winner = random.choice(generation)
-    fitness_cw = fitness_function(current_winner.to_networkx(), targets)
+    fitness_cw = evaluate(current_winner, targets)
     for _ in range(k-1):
         candidate = random.choice(generation)
-        fitness_can = fitness_function(candidate.to_networkx(), targets)
+        fitness_can = evaluate(candidate, targets)
         if fitness_can < fitness_cw:
             fitness_cw = fitness_can
             current_winner = candidate
@@ -376,7 +433,7 @@ def replacement_selection(parents: list, children: list, targets: list[nx.DiGrap
 
     fitness = []
     for child in children:
-        fitness.append(fitness_function(child.to_networkx(), targets))
+        fitness.append(evaluate(child, targets))
 
     scored = []
     for i in range(len(fitness)):
@@ -397,7 +454,7 @@ def elitism_selection(parents: list, children: list, targets: list[nx.DiGraph], 
     # generation. 
     parent_child = parents.copy()
     parent_child.extend(children)
-    parent_child_fitness = [fitness_function(x.to_networkx(), targets) for x in parent_child]
+    parent_child_fitness = [evaluate(x, targets) for x in parent_child]
     #Another small edge-case fix, comparison wouldn't work if fitness was to be equal
     parent_child_sorted = [x for _, x in sorted(zip(parent_child_fitness, parent_child), key=lambda pair: pair[0])]
     new_generation = parent_child_sorted[:s]
@@ -405,24 +462,22 @@ def elitism_selection(parents: list, children: list, targets: list[nx.DiGraph], 
     new_generation.extend(others)
     return new_generation
 
-def evolve_population(generation: list, targets: list[nx.DiGraph], selection_method: int):
-    # Evolves a generation once using either replacement (0) or elitism (2) as a selection method.
-    s = 2
-    k = 3
-    p_c = 0.5
-    p_m = 0.5
+def evolve_population(generation: list, targets: list[nx.DiGraph], selection_method: int, hyperparameters: dict[str, int| float]):
+    # Evolves a generation once using either replacement (0) or elitism (1) as a selection method.
 
     children = []
 
-    #Fixed the edge case for odd population sizes
-    for _ in range(int(len(generation) + 1 // 2)):
-        parent_1 = tournament_selection(generation, targets, k)
-        parent_2 = tournament_selection(generation, targets, k)
+    # One pair of parents produces one pair of children, so a population of
+    # N needs ceil(N / 2) pairs. (Note the brackets: `N + 1 // 2` is `N + 0`,
+    # which built twice as many children as the population can hold.)
+    for _ in range((len(generation) + 1) // 2):
+        parent_1 = tournament_selection(generation, targets, int(hyperparameters["k"]))
+        parent_2 = tournament_selection(generation, targets, int(hyperparameters["k"]))
 
-        child_1, child_2 = crossover(parent_1, parent_2, p_c)
+        child_1, child_2 = crossover(parent_1, parent_2, float(hyperparameters["p_c"]))
 
-        child_1 = mutation(child_1, p_m)
-        child_2 = mutation(child_2, p_m)
+        child_1 = mutation(child_1, float(hyperparameters["p_m"]))
+        child_2 = mutation(child_2, float(hyperparameters["p_m"]))
 
         children.append(child_1)
         children.append(child_2)
@@ -430,16 +485,81 @@ def evolve_population(generation: list, targets: list[nx.DiGraph], selection_met
     #Edge case with odd population sizes
     children = children[:len(generation)]
     if selection_method == 0:
-        new_generation = children
+        new_generation = replacement_selection(generation, children, targets)
         return new_generation
     elif selection_method == 1:
-        new_generation = elitism_selection(generation, children, targets, s)
+        new_generation = elitism_selection(generation, children, targets, int(hyperparameters["s"]))
         return new_generation
 
     
     return None
 
+def run_evolution(starting_population: list, targets: list[nx.DiGraph], selection_method: int, hyperparameters: dict[str, int | float]):
+    """Run one independent evolutionary run and return its population history.
 
+    `history[g]` is the population at generation `g`; `history[0]` is
+    `starting_population`. The run lasts a FIXED number of generations, so
+    every run in an experiment spends the same evaluation budget and the
+    per-generation curves of different runs line up on a shared x-axis.
+
+    Setting `stagnation_patience` to a positive value additionally stops a run
+    early once the best fitness has failed to improve by more than
+    `fitness_improvement_threshold` for that many consecutive generations. It
+    is 0 (disabled) by default, because an early stop spends less than the
+    nominal budget and makes the comparison against random search unfair.
+    """
+    generations = int(hyperparameters["generations"])
+    patience = int(hyperparameters.get("stagnation_patience", 0))
+    threshold = float(hyperparameters.get("fitness_improvement_threshold", 0.0))
+
+    population_history = [starting_population]
+    best_so_far = min(evaluate(x, targets) for x in starting_population)
+    stagnant = 0
+
+    for _ in range(generations):
+        population = evolve_population(
+            population_history[-1],
+            targets,
+            selection_method,
+            hyperparameters,
+        )
+        population_history.append(population)
+
+        best = min(evaluate(x, targets) for x in population)
+        if best_so_far - best > threshold:
+            stagnant = 0
+        else:
+            stagnant += 1
+        best_so_far = min(best_so_far, best)
+
+        if patience and stagnant >= patience:
+            break
+
+    return population_history
+
+
+def random_search(targets: list[nx.DiGraph], hyperparameters: dict[str, int | float]):
+    """Random-search baseline, given exactly the EA's evaluation budget.
+
+    Draws `pop_size` fresh random genomes per "generation" for
+    `generations + 1` generations - the same number of genomes the EA creates
+    and scores - and returns them in the same history format as
+    `run_evolution`, so both go through the same plotting and statistics code.
+
+    This is the control the assignment asks for: it says how much of the EA's
+    progress comes from *search*, rather than from drawing several thousand
+    random bodies and keeping the luckiest one.
+    """
+    pop_size = int(hyperparameters["pop_size"])
+    generations = int(hyperparameters["generations"])
+
+    population_history = []
+    for _ in range(generations + 1):
+        batch = [random_tree(max_modules=NUM_OF_MODULES) for _ in range(pop_size)]
+        for genome in batch:
+            evaluate(genome, targets)
+        population_history.append(batch)
+    return population_history
 
 
 
@@ -456,26 +576,28 @@ def plot_means_evolutions(evolutions: list, targets: list[nx.DiGraph], selection
     for evo in evolutions:
         mean_fitness_of_generations = []
         for gen in evo:
-            fitness = [fitness_function(x.to_networkx(), targets) for x in gen]
+            fitness = [evaluate(x, targets) for x in gen]
             mean = np.mean(fitness)
             mean_fitness_of_generations.append(mean)
         mean_fitness_evolutions.append(mean_fitness_of_generations)
     
     
+    # rows = runs, columns = generations. Runs that stopped early are
+    # padded with NaN, so aggregate DOWN THE COLUMNS (axis=0): that is
+    # "across runs, per generation". axis=1 averages each run with
+    # itself and yields one point per run instead of one per generation.
     pad = len(max(mean_fitness_evolutions, key=len))
     array_fe = np.array([i + [np.nan]*(pad-len(i)) for i in mean_fitness_evolutions])
-    # array_fe = np.array(fitness_evolutions)
-    means = np.nanmean(array_fe, axis=1)
-    std = np.nanstd(array_fe, axis=1, mean=means)
-    
+    means = np.nanmean(array_fe, axis=0)
+    std = np.nanstd(array_fe, axis=0)
+
+    # mark the generation at which any early-stopping run broke off
     stamps = []
     values = []
-    nan_array_fe = np.isnan(array_fe)
-    for gen in nan_array_fe:
-        if len(gen) != pad:
-            indx = np.where(gen == True)[0][0]
-            stamps.append(indx-1)
-            values.append(means[indx-1])
+    for run in mean_fitness_evolutions:
+        if len(run) < pad:
+            stamps.append(len(run) - 1)
+            values.append(means[len(run) - 1])
 
 
 
@@ -507,25 +629,27 @@ def plot_bests_evolutions(evolutions: list, targets: list[nx.DiGraph], selection
     for evo in evolutions:
         best_fitness_per_generations = []
         for gen in evo:
-            fitness = [fitness_function(x.to_networkx(), targets) for x in gen]
+            fitness = [evaluate(x, targets) for x in gen]
             best = min(fitness)
             best_fitness_per_generations.append(best)
         fitness_evolutions.append(best_fitness_per_generations)
 
+    # rows = runs, columns = generations. Runs that stopped early are
+    # padded with NaN, so aggregate DOWN THE COLUMNS (axis=0): that is
+    # "across runs, per generation". axis=1 averages each run with
+    # itself and yields one point per run instead of one per generation.
     pad = len(max(fitness_evolutions, key=len))
     array_fe = np.array([i + [np.nan]*(pad-len(i)) for i in fitness_evolutions])
-    # array_fe = np.array(fitness_evolutions)
-    means = np.nanmean(array_fe, axis=1)
-    std = np.nanstd(array_fe, axis=1, mean=means)
+    means = np.nanmean(array_fe, axis=0)
+    std = np.nanstd(array_fe, axis=0)
 
+    # mark the generation at which any early-stopping run broke off
     stamps = []
     values = []
-    nan_array_fe = np.isnan(array_fe)
-    for gen in nan_array_fe:
-        if len(gen) != pad:
-            indx = np.where(gen == True)[0][0]
-            stamps.append(indx-1)
-            values.append(means[indx-1])
+    for run in fitness_evolutions:
+        if len(run) < pad:
+            stamps.append(len(run) - 1)
+            values.append(means[len(run) - 1])
 
 
 
@@ -565,6 +689,20 @@ def main() -> None:
         + ", ".join(str(t.number_of_nodes()) for t in targets),
     )
 
+    # Default hyperparameters. The final experiment overrides these from
+    # experiment_runner.py - see DEFAULT_HYPERPARAMETERS there, which is the
+    # single source of truth for the numbers reported in the paper.
+    hyperparameters = {
+        "pop_size": 10,          # tiny: this is a smoke test, not an experiment
+        "generations": 5,
+        "k": 3,                  # tournament size
+        "p_c": 0.5,              # crossover probability
+        "p_m": 0.5,              # mutation probability
+        "s": 2,                  # elites carried over (elitism only)
+        "stagnation_patience": 0,
+        "fitness_improvement_threshold": 0.0,
+    }
+
     # How far apart are the targets from each other? Your fitness cannot go
     # below the best possible compromise, and this is the clue to where that is.
     spread = [
@@ -573,11 +711,6 @@ def main() -> None:
         for b in targets[i + 1 :]
     ]
     console.log(f"target spread : mean pairwise distance {np.mean(spread):.2f}")
-
-    # i=0
-    # for t in targets:
-    #     show_body(t, "frame", file_name=f"target_0{i}")
-    #     i+=1
 
     # --- One random body --------------------------------------------------- #
     body = random_body(GENOTYPE, NUM_OF_MODULES)
@@ -591,62 +724,39 @@ def main() -> None:
     )
     console.log(f"fitness       : {fitness:.4f}   (lower is better)")
 
-    show_body(body, "frame", file_name=f"random_{GENOTYPE}_{SEED}")
+    # --- Smoke test: one short run of each condition ------------------------ #
+    # The real experiment (5+ independent runs per condition, statistics and
+    # the report figures) lives in experiment_runner.py:
+    #
+    #     python experiment_runner.py final
+    #
+    # What follows is only the "test your algorithm first using a small
+    # population for few generations" check from the assignment tips.
+    console.log("")
+    console.log("smoke test    : 10 individuals, 5 generations, 1 seed each")
 
-    # --- Evolution --------------------------------------------------------- #
-    # gen1 = random_tree(NUM_OF_MODULES)
-    # gen2 = random_tree(NUM_OF_MODULES)
-    # c1,c2=crossover(gen1,gen2,1)
-    # # child = mutation(gen, 1)
-    # nx.draw(gen1.to_networkx(), with_labels=True)
-    # plt.show()
-    # nx.draw(c1.to_networkx(), with_labels=True)
-    # plt.show()
-    # nx.draw(gen2.to_networkx(), with_labels=True)
-    # plt.show()
-    # nx.draw(c2.to_networkx(), with_labels=True)
-    # plt.show()
+    histories = {}
+    for label, selection_method in (("replacement", 0), ("elitism", 1)):
+        random.seed(SEED)
+        reset_evaluation_budget()
+        population = generate_population(int(hyperparameters["pop_size"]))
+        history = run_evolution(population, targets, selection_method, hyperparameters)
+        histories[label] = history
+        best = min(evaluate(x, targets) for x in history[-1])
+        console.log(
+            f"  {label:<12}: best {best:.3f} after {len(history) - 1} gens "
+            f"({evaluations_used()} evaluations)",
+        )
 
-    pop=generate_population(10)
-
-    # print([x[0] for x in pop])
-    # i=0
-    # for a in pop:
-    #     b = a.to_networkx()
-    #     show_body(b, "frame", file_name=f"initial_{i}")
-    #     i+=1
-
-    # tournament_selection(pop, targets, 3)
-    new_gen_rep = evolve_population(pop, targets, 0)
-    new_gen_eli = evolve_population(pop, targets, 1)
-
-    # i=0
-    # for a in new_gen_rep:
-    #     b = a.to_networkx()
-    #     show_body(b, "frame", file_name=f"replacement_{i}")
-    #     i+=1
-    # i=0
-    # for a in new_gen_eli:
-    #     b = a.to_networkx()
-    #     show_body(b, "frame", file_name=f"elitism_{i}")
-    #     i+=1
-
-    pop_2 = generate_population(10)
-    new_gen_rep_2 = evolve_population(pop_2, targets, 0)
-    new_gen_eli_2 = evolve_population(pop_2, targets, 1)
-
-
-    evo_rep_1=[pop, new_gen_rep]
-    evo_rep_2=[pop_2, new_gen_rep_2]
-
-    evo_eli_1=[pop, new_gen_eli]
-    evo_eli_2=[pop_2, new_gen_eli_2]
-
-    plot_bests_evolutions([evo_rep_1, evo_rep_2], targets,0)
-    plot_bests_evolutions([evo_eli_1, evo_eli_2], targets,1)
-    plot_means_evolutions([evo_rep_1, evo_rep_2], targets,0)
-    plot_means_evolutions([evo_eli_1, evo_eli_2], targets,1)
-
+    random.seed(SEED)
+    reset_evaluation_budget()
+    history = random_search(targets, hyperparameters)
+    histories["random search"] = history
+    best = min(evaluate(x, targets) for gen in history for x in gen)
+    console.log(
+        f"  {'random':<12}: best {best:.3f} at the same budget "
+        f"({evaluations_used()} evaluations)",
+    )
 
 
 if __name__ == "__main__":
