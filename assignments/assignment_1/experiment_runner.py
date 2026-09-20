@@ -130,6 +130,11 @@ PLOT_STYLE: dict[str, dict[str, str]] = {
     "random": {"color": "#7f7f7f", "label": "random search (same budget)"},
 }
 
+def safe_name(label: str) -> str:
+    """Filename-safe form of a curve label ("elitism s=2" -> "elitism_s2")."""
+    return label.replace(" ", "_").replace("=", "")
+
+
 def labels_in(frame: pd.DataFrame) -> list[str]:
     """Curve labels in a stable order: the fixed conditions first, then sweeps."""
     present = list(dict.fromkeys(frame["condition"]))
@@ -367,8 +372,7 @@ def save_experiment(
     genome_dir.mkdir(exist_ok=True)
     for result in results:
         if result.best_genome is not None:
-            safe = result.label.replace(" ", "_").replace("=", "")
-            path = genome_dir / f"{safe}_seed{result.seed}.json"
+            path = genome_dir / f"{safe_name(result.label)}_seed{result.seed}.json"
             path.write_text(json.dumps(result.best_genome, indent=2))
 
     metadata = {
@@ -520,6 +524,114 @@ def plot_comparison(
     figure.savefig(path, dpi=200)
     plt.close(figure)
     print(f"  wrote {path}")
+
+
+def plot_single_condition(
+    frame: pd.DataFrame,
+    condition: str,
+    column: str,
+    ylabel: str,
+    title: str,
+    path: Path,
+    color: str,
+) -> None:
+    """One condition on its own: every run faintly, the mean and +-1 std on top.
+
+    The overlay figures answer "which condition is better"; this one answers
+    "how consistent is this condition", which the overlays hide - a tight band
+    around a mean can just as well be two runs that failed in the same way. The
+    individual traces are drawn so that spread is visible rather than inferred.
+    """
+    subset = frame[frame["condition"] == condition]
+    pivot = subset.pivot(index="generation", columns="seed", values=column)
+    generations = pivot.index.to_numpy()
+    mean = pivot.mean(axis=1).to_numpy()
+    std = pivot.std(axis=1, ddof=1).to_numpy()
+
+    figure, axis = plt.subplots(figsize=(6.0, 3.6))
+
+    for seed in pivot.columns:
+        axis.plot(
+            generations,
+            pivot[seed].to_numpy(),
+            color=color,
+            alpha=0.22,
+            linewidth=0.7,
+        )
+
+    axis.fill_between(
+        generations,
+        mean - std,
+        mean + std,
+        color=color,
+        alpha=0.20,
+        linewidth=0,
+        label="±1 std across runs",
+    )
+    axis.plot(
+        generations,
+        mean,
+        color=color,
+        linewidth=1.9,
+        label=f"mean of {pivot.shape[1]} runs",
+    )
+
+    # A run that stopped early leaves NaNs at the tail. With
+    # `stagnation_patience` at 0 nothing stops early and this draws nothing,
+    # but it keeps the figure honest if the early stop is ever switched on.
+    last_generation = generations.max()
+    stops = []
+    for seed in pivot.columns:
+        finite = pivot[seed].dropna()
+        if len(finite) and finite.index.max() < last_generation:
+            stops.append(finite.index.max())
+    if stops:
+        axis.scatter(
+            stops,
+            [mean[generations.tolist().index(g)] for g in stops],
+            color="black",
+            s=18,
+            zorder=4,
+            label="run stopped early",
+        )
+
+    axis.set_xlabel("generation")
+    axis.set_ylabel(ylabel)
+    axis.set_title(title, fontsize=10)
+    axis.legend(fontsize=8, frameon=False)
+    axis.grid(alpha=0.25, linewidth=0.5)
+    figure.tight_layout()
+    figure.savefig(path, dpi=200)
+    plt.close(figure)
+    print(f"  wrote {path}")
+
+
+def plot_each_condition(frame: pd.DataFrame, out_dir: Path) -> None:
+    """The per-condition best-of-generation and population-mean figures."""
+    labels = labels_in(frame)
+    styles = styles_for(labels)
+    runs = frame.groupby("condition")["seed"].nunique().max()
+
+    for condition in labels:
+        color = styles[condition]["color"]
+        plot_single_condition(
+            frame,
+            condition,
+            "best",
+            "best fitness in generation (lower is better)",
+            f"Best fitness per generation over {runs} runs - {condition}",
+            out_dir / f"fig_best_{safe_name(condition)}.png",
+            color,
+        )
+        plot_single_condition(
+            frame,
+            condition,
+            "mean",
+            "population mean fitness (lower is better)",
+            f"Mean fitness per generation over {runs} runs - {condition}",
+            out_dir / f"fig_mean_{safe_name(condition)}.png",
+            color,
+        )
 
 
 def plot_final_distribution(summary: pd.DataFrame, path: Path) -> None:
@@ -695,6 +807,7 @@ def make_figures(tag: str) -> None:
         out_dir / "fig_diversity.png",
     )
     plot_final_distribution(summary, out_dir / "fig_final_distribution.png")
+    plot_each_condition(frame, out_dir)
     plot_bodies(tag)
 
 
@@ -705,8 +818,7 @@ def make_figures(tag: str) -> None:
 
 def champion_path(out_dir: Path, label: str, seed: int) -> Path:
     """Where `save_experiment` put the best genome of one run."""
-    safe = label.replace(" ", "_").replace("=", "")
-    return out_dir / "best_genomes" / f"{safe}_seed{seed}.json"
+    return out_dir / "best_genomes" / f"{safe_name(label)}_seed{seed}.json"
 
 
 def report(tag: str) -> None:
@@ -803,7 +915,7 @@ def render_champions(tag: str) -> None:
         ea.show_body(
             genome.to_networkx(),
             "frame",
-            file_name=f"{tag}_champion_{condition.replace(' ', '_').replace('=', '')}",
+            file_name=f"{tag}_champion_{safe_name(condition)}",
         )
 
 
