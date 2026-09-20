@@ -67,6 +67,7 @@ from scipy.stats import mannwhitneyu
 
 # Local scripts
 import A1_2026 as ea
+from A1_2026 import plot_bests_evolutions, plot_means_evolutions
 from ariel.ec.genotypes.tree.tree_genome import TreeGenome
 from tree_edit_distance import distances_to_targets, tree_edit_distance
 
@@ -526,111 +527,41 @@ def plot_comparison(
     print(f"  wrote {path}")
 
 
-def plot_single_condition(
-    frame: pd.DataFrame,
-    condition: str,
-    column: str,
-    ylabel: str,
-    title: str,
-    path: Path,
-    color: str,
-) -> None:
-    """One condition on its own: every run faintly, the mean and +-1 std on top.
+def evolution_curves(frame: pd.DataFrame, condition: str, column: str) -> list[list[float]]:
+    """One list of per-generation fitness values per run, for one condition.
 
-    The overlay figures answer "which condition is better"; this one answers
-    "how consistent is this condition", which the overlays hide - a tight band
-    around a mean can just as well be two runs that failed in the same way. The
-    individual traces are drawn so that spread is visible rather than inferred.
+    This is the shape `plot_means_evolutions` and `plot_bests_evolutions` take:
+    a list of runs, each already reduced to one number per generation. Runs are
+    read back from the saved CSV, so a run that stopped early is simply shorter
+    than the rest, which is exactly what their NaN padding is there to handle.
     """
     subset = frame[frame["condition"] == condition]
-    pivot = subset.pivot(index="generation", columns="seed", values=column)
-    generations = pivot.index.to_numpy()
-    mean = pivot.mean(axis=1).to_numpy()
-    std = pivot.std(axis=1, ddof=1).to_numpy()
-
-    figure, axis = plt.subplots(figsize=(6.0, 3.6))
-
-    for seed in pivot.columns:
-        axis.plot(
-            generations,
-            pivot[seed].to_numpy(),
-            color=color,
-            alpha=0.22,
-            linewidth=0.7,
-        )
-
-    axis.fill_between(
-        generations,
-        mean - std,
-        mean + std,
-        color=color,
-        alpha=0.20,
-        linewidth=0,
-        label="±1 std across runs",
-    )
-    axis.plot(
-        generations,
-        mean,
-        color=color,
-        linewidth=1.9,
-        label=f"mean of {pivot.shape[1]} runs",
-    )
-
-    # A run that stopped early leaves NaNs at the tail. With
-    # `stagnation_patience` at 0 nothing stops early and this draws nothing,
-    # but it keeps the figure honest if the early stop is ever switched on.
-    last_generation = generations.max()
-    stops = []
-    for seed in pivot.columns:
-        finite = pivot[seed].dropna()
-        if len(finite) and finite.index.max() < last_generation:
-            stops.append(finite.index.max())
-    if stops:
-        axis.scatter(
-            stops,
-            [mean[generations.tolist().index(g)] for g in stops],
-            color="black",
-            s=18,
-            zorder=4,
-            label="run stopped early",
-        )
-
-    axis.set_xlabel("generation")
-    axis.set_ylabel(ylabel)
-    axis.set_title(title, fontsize=10)
-    axis.legend(fontsize=8, frameon=False)
-    axis.grid(alpha=0.25, linewidth=0.5)
-    figure.tight_layout()
-    figure.savefig(path, dpi=200)
-    plt.close(figure)
-    print(f"  wrote {path}")
+    curves = []
+    for _, run in subset.groupby("seed"):
+        run = run.sort_values("generation")
+        curves.append(run[column].astype(float).tolist())
+    return curves
 
 
 def plot_each_condition(frame: pd.DataFrame, out_dir: Path) -> None:
-    """The per-condition best-of-generation and population-mean figures."""
-    labels = labels_in(frame)
-    styles = styles_for(labels)
-    runs = frame.groupby("condition")["seed"].nunique().max()
+    """Per-condition figures, drawn by the plotting functions in A1_2026.
 
-    for condition in labels:
-        color = styles[condition]["color"]
-        plot_single_condition(
-            frame,
+    The overlay figures above put every condition on one axis to answer which
+    is better; these are the single-condition view, one file per condition per
+    metric.
+    """
+    for condition in labels_in(frame):
+        plot_bests_evolutions(
+            evolution_curves(frame, condition, "best"),
+            None,  # fitness is already computed, so no targets are needed
             condition,
-            "best",
-            "best fitness in generation (lower is better)",
-            f"Best fitness per generation over {runs} runs - {condition}",
-            out_dir / f"fig_best_{safe_name(condition)}.png",
-            color,
+            save_path=out_dir / f"fig_best_{safe_name(condition)}.png",
         )
-        plot_single_condition(
-            frame,
+        plot_means_evolutions(
+            evolution_curves(frame, condition, "mean"),
+            None,
             condition,
-            "mean",
-            "population mean fitness (lower is better)",
-            f"Mean fitness per generation over {runs} runs - {condition}",
-            out_dir / f"fig_mean_{safe_name(condition)}.png",
-            color,
+            save_path=out_dir / f"fig_mean_{safe_name(condition)}.png",
         )
 
 

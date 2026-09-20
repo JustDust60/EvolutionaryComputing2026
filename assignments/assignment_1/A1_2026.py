@@ -568,72 +568,50 @@ def random_search(targets: list[nx.DiGraph], hyperparameters: dict[str, int | fl
 # ============================================================================ #
 
 # evolutions is a list containing evolutions, these are lists containing generations(populations), these contain individuals
+#
+# Both plotting functions also accept an evolution that is already a flat list
+# of one fitness value per generation. The experiment harness needs that: it
+# runs in worker processes and throws populations away as soon as it has
+# scored them, because shipping thousands of genomes back per run costs far
+# more than shipping the numbers they were reduced to.
+#
+# Pass `save_path` to write the figure to disk instead of opening a window;
+# `selection_method` may be 0, 1, or a label string for anything else.
 
-def plot_means_evolutions(evolutions: list, targets: list[nx.DiGraph], selection_method: int):
-    # Generates a plot of means + std of multiple evolution runs in regards to the average fitness per generation
-    
-    mean_fitness_evolutions = []
+
+def _fitness_per_generation(evolutions: list, targets, aggregate) -> list[list[float]]:
+    """Reduce each run to one fitness value per generation.
+
+    Accepts either populations of genomes (reduced with `aggregate`) or a run
+    that is already a list of floats, which is passed through unchanged.
+    """
+    curves = []
     for evo in evolutions:
-        mean_fitness_of_generations = []
-        for gen in evo:
-            fitness = [evaluate(x, targets) for x in gen]
-            mean = np.mean(fitness)
-            mean_fitness_of_generations.append(mean)
-        mean_fitness_evolutions.append(mean_fitness_of_generations)
-    
-    
-    # rows = runs, columns = generations. Runs that stopped early are
-    # padded with NaN, so aggregate DOWN THE COLUMNS (axis=0): that is
-    # "across runs, per generation". axis=1 averages each run with
-    # itself and yields one point per run instead of one per generation.
-    pad = len(max(mean_fitness_evolutions, key=len))
-    array_fe = np.array([i + [np.nan]*(pad-len(i)) for i in mean_fitness_evolutions])
-    means = np.nanmean(array_fe, axis=0)
-    std = np.nanstd(array_fe, axis=0)
-
-    # mark the generation at which any early-stopping run broke off
-    stamps = []
-    values = []
-    for run in mean_fitness_evolutions:
-        if len(run) < pad:
-            stamps.append(len(run) - 1)
-            values.append(means[len(run) - 1])
+        if len(evo) and isinstance(evo[0], (int, float, np.floating)):
+            curves.append([float(value) for value in evo])
+            continue
+        curves.append([
+            float(aggregate([evaluate(x, targets) for x in gen])) for gen in evo
+        ])
+    return curves
 
 
-
-    generations = [x for x in range(len(means))]
-    plt.plot(generations, means)
-    plt.fill_between(generations, means+std, means-std, alpha=0.5)
-
-    # plots the breakoff points of evolution runs
-    plt.scatter(stamps, values, c="red")
-
-    plt.xlabel('generation')
-    plt.ylabel('mean fitness (lower is better)')
-
+def _describe(selection_method: int | str) -> str:
+    """Name the condition for a plot title."""
     if selection_method == 0:
-        plt.title(f"Average mean fitness per gereration over {len(evolutions)} runs using replacement")
-    elif selection_method == 1:
-        plt.title(f"Average mean fitness per gereration over {len(evolutions)} runs using elitism")
-
-    plt.show()
-
-    return None
+        return "replacement"
+    if selection_method == 1:
+        return "elitism"
+    return str(selection_method)
 
 
-
-def plot_bests_evolutions(evolutions: list, targets: list[nx.DiGraph], selection_method: int):
-    # Generates a plot of means + std of multiple evolution runs in regards to the best fitness per generation
-    
-    fitness_evolutions = []
-    for evo in evolutions:
-        best_fitness_per_generations = []
-        for gen in evo:
-            fitness = [evaluate(x, targets) for x in gen]
-            best = min(fitness)
-            best_fitness_per_generations.append(best)
-        fitness_evolutions.append(best_fitness_per_generations)
-
+def _draw_evolution_curves(
+    fitness_evolutions: list[list[float]],
+    ylabel: str,
+    title: str,
+    save_path=None,
+) -> None:
+    """Mean +- std across runs per generation, with early-stop markers."""
     # rows = runs, columns = generations. Runs that stopped early are
     # padded with NaN, so aggregate DOWN THE COLUMNS (axis=0): that is
     # "across runs, per generation". axis=1 averages each run with
@@ -651,26 +629,64 @@ def plot_bests_evolutions(evolutions: list, targets: list[nx.DiGraph], selection
             stamps.append(len(run) - 1)
             values.append(means[len(run) - 1])
 
-
-
+    figure, axis = plt.subplots(figsize=(6.0, 3.6))
     generations = [x for x in range(len(means))]
-    plt.plot(generations, means)
-    plt.fill_between(generations, means+std, means-std, alpha=0.5)
+    axis.plot(generations, means)
+    axis.fill_between(generations, means+std, means-std, alpha=0.5)
 
     # plots the breakoff points of evolution runs
-    plt.scatter(stamps, values, c="red")
+    axis.scatter(stamps, values, c="red", zorder=4)
 
-    plt.xlabel('generation')
-    plt.ylabel('best fitness (lower is better)')
+    axis.set_xlabel('generation')
+    axis.set_ylabel(ylabel)
+    axis.set_title(title, fontsize=10)
+    axis.grid(alpha=0.25, linewidth=0.5)
+    figure.tight_layout()
 
-    if selection_method == 0:
-        plt.title(f"Average best fitness per gereration over {len(evolutions)} runs using replacement")
-    elif selection_method == 1:
-        plt.title(f"Average best fitness per gereration over {len(evolutions)} runs using elitism")
+    if save_path is None:
+        plt.show()
+        plt.close(figure)
+        return
+    figure.savefig(save_path, dpi=200)
+    plt.close(figure)
+    console.log(f"saved {save_path}")
 
-    plt.show()
-    
+
+def plot_means_evolutions(
+    evolutions: list,
+    targets: list[nx.DiGraph] | None,
+    selection_method: int | str,
+    save_path=None,
+):
+    # Generates a plot of means + std of multiple evolution runs in regards to the average fitness per generation
+    mean_fitness_evolutions = _fitness_per_generation(evolutions, targets, np.mean)
+    _draw_evolution_curves(
+        mean_fitness_evolutions,
+        'mean fitness (lower is better)',
+        f"Average mean fitness per generation over {len(evolutions)} runs "
+        f"using {_describe(selection_method)}",
+        save_path,
+    )
     return None
+
+
+def plot_bests_evolutions(
+    evolutions: list,
+    targets: list[nx.DiGraph] | None,
+    selection_method: int | str,
+    save_path=None,
+):
+    # Generates a plot of means + std of multiple evolution runs in regards to the best fitness per generation
+    fitness_evolutions = _fitness_per_generation(evolutions, targets, min)
+    _draw_evolution_curves(
+        fitness_evolutions,
+        'best fitness (lower is better)',
+        f"Average best fitness per generation over {len(evolutions)} runs "
+        f"using {_describe(selection_method)}",
+        save_path,
+    )
+    return None
+
 
 # ============================================================================ #
 #  7. ENTRY POINT
