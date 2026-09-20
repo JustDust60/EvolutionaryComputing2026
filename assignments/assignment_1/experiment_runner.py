@@ -985,8 +985,12 @@ def command_sweep(args: argparse.Namespace) -> None:
             jobs.append((condition, seed, dict(hyperparameters), condition))
 
     for elites in args.s:
-        if elites >= args.pop_size:
-            print(f"  skipping s={elites}: not below pop_size={args.pop_size}")
+        # s == pop_size is legal and is the interesting endpoint: every slot is
+        # filled by rank and none at random, i.e. textbook (mu + lambda)
+        # truncation selection. Above that there are not enough survivors to
+        # fill the population.
+        if elites > args.pop_size:
+            print(f"  skipping s={elites}: above pop_size={args.pop_size}")
             continue
         candidate = dict(hyperparameters)
         candidate["s"] = int(elites)
@@ -1071,7 +1075,7 @@ def build_parser() -> argparse.ArgumentParser:
     sweep.add_argument("--pop-size", type=int, default=50)
     sweep.add_argument("--generations", type=int, default=100)
     sweep.add_argument("--seeds", type=int, default=len(FINAL_SEEDS))
-    sweep.add_argument("--s", type=int, nargs="+", default=[2, 5, 10, 25, 45])
+    sweep.add_argument("--s", type=int, nargs="+", default=[2, 5, 10, 25, 45, 50])
     sweep.add_argument(
         "--config",
         default=None,
