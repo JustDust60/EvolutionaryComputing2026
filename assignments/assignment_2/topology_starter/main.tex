@@ -1,0 +1,305 @@
+% Standalone, Overleaf-ready course report template.
+% GECCO19 uses ACM SigConf. nonacm suppresses irrelevant publication metadata.
+% One source file, inline bibliography, no external figure files required yet.
+% Person 3 owns this file; Persons 1/2 verify their Methods descriptions.
+\documentclass[sigconf,nonacm]{acmart}
+\settopmatter{printacmref=false,printfolios=true}
+\renewcommand\footnotetextcopyrightpermission[1]{}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\newcommand{\todo}[1]{\par\smallskip\noindent\textcolor{blue!60!black}{\textbf{TO COMPLETE:} #1}\par\smallskip}
+\newcommand{\figureplaceholder}[2]{%
+  \IfFileExists{#1}{\includegraphics[width=\linewidth]{#1}}{%
+    \fbox{\parbox[c][30mm][c]{0.92\linewidth}{\centering #2\\[3mm]
+    Upload the final figure here. No experimental data have been inserted.}}}}
+\title{Evolving Controller Topology for Targeted Robot Locomotion}
+\author{Team name / number: TO COMPLETE}
+\affiliation{\institution{Evolutionary Computing, 2026}\country{The Netherlands}}
+\renewcommand{\shortauthors}{Team TO COMPLETE}
+
+\begin{document}
+\onecolumn
+\thispagestyle{empty}
+\begin{center}
+\vspace*{20mm}
+{\LARGE Evolutionary Computing\par}
+\vspace{6mm}
+{\Large Standard Assignment -- Task II\par}
+\vspace{12mm}
+{\huge\bfseries Evolving Controller Topology\\for Targeted Robot Locomotion\par}
+\vspace{15mm}
+{\large Team number / name: TO COMPLETE\par}
+\vspace{8mm}
+\begin{tabular}{ll}
+\toprule
+Team member & Student ID\\
+\midrule
+Person 1: TO COMPLETE & TO COMPLETE\\
+Person 2: TO COMPLETE & TO COMPLETE\\
+Person 3: TO COMPLETE & TO COMPLETE\\
+% Add a row for every other registered team member, if applicable.
+\bottomrule
+\end{tabular}
+\vspace{12mm}
+\par Date: TO COMPLETE\par
+\vfill
+\par Draft report template; experiments have not yet been run.\par
+\end{center}
+\clearpage
+\twocolumn
+\setcounter{page}{1}
+\maketitle
+
+% Writing budget: Introduction ~0.75 page; Methods ~2 pages;
+% Results/Discussion ~2.5 pages; Conclusions ~0.25 page.
+% Hard limit: 6 CONTENT pages. Cover and bibliography do not count.
+% All proposed methods below MUST be updated to match the final implementation.
+
+\section{Introduction}
+Neuroevolution optimizes neural-network controllers using their performance on a
+task, rather than a collection of desired output examples. A conventional
+approach fixes the network topology and evolves its connection weights.
+Topology-and-weight evolution additionally allows the network structure to
+change during search. NEAT motivates starting with small networks and adding
+complexity incrementally, alongside other mechanisms including speciation and
+historical markings~\cite{stanley2002}.
+
+This study investigates a restricted version of incremental complexification:
+adding hidden neurons to a single-layer controller while evolving its weights.
+It isolates growth without implementing full NEAT. The task is targeted
+locomotion of a fixed robot body in a fixed simulated environment.
+
+\paragraph{Research question.}
+Does incrementally adding hidden neurons improve target-reaching performance
+compared with fixed-topology weight evolution, at the same simulation-evaluation
+budget?
+
+\paragraph{Hypothesis.}
+Starting with a small search space and introducing additional capacity gradually
+may improve performance within a limited budget. Alternatively, growth may
+consume search effort without improving locomotion, or a larger fixed network
+may obtain comparable performance without structural mutation.
+
+\todo{Person 3: explain why the comparison matters using the course lecture.
+Briefly distinguish the small fixed control from the larger fixed control.
+Document the instructor's scope clarification when obtained. Treat the
+hypothesis as a prediction, not a result.}
+
+\section{Methods}
+\subsection{Task, robot and simulation}
+\todo{Person 2 supplies facts; Person 3 writes: identify the exact John Set body
+and environment, ARIEL version/commit, Python and MuJoCo versions, timestep,
+spawn, target, duration, action application policy, observation normalization,
+and how simulation state and the global callback are reset between individuals.}
+
+The proposed setup uses \texttt{john\_set.gecko()} in
+\texttt{SimpleFlatWorld}, spawned at $(0,0,0.1)$ with target ground-plane
+coordinates $(2,0)$. Each final evaluation lasts 15 simulated seconds.
+These choices are provisional until the implementation and pilot are verified.
+All conditions use the same task, body, environment and simulation settings.
+
+The fitness of a controller is the remaining horizontal distance
+\begin{equation}
+ d = \sqrt{(x_{\mathrm{final}}-x_{\mathrm{target}})^2
+           +(y_{\mathrm{final}}-y_{\mathrm{target}})^2},
+\end{equation}
+which is minimized. Height is excluded, and no network-complexity penalty is
+included in the fitness function.
+\todo{Specify any numerical-failure score and how failures count against the
+budget. Do not replace failed runs silently or hide coding errors as bad fitness.}
+
+\subsection{Controller and representation}
+\todo{Person 2: list every observation, its order/scale, and the final input and
+output dimensions. Include target information and periodic time features.}
+
+The planned controller is a dense, single-hidden-layer network with
+\(\mathbf{h}=\tanh(\mathbf{x}W_{\mathrm{in}})\) and
+\(\mathbf{a}=(\pi/2)\tanh(\mathbf{h}W_{\mathrm{out}})\).
+A constant input feature supplies a hidden-layer bias. Input and output sizes
+remain fixed across all network sizes. Genotypes explicitly encode dimensions
+and the two weight matrices. For $I$ input features (including the constant
+feature), $H$ hidden neurons and $O$ actuators, the connection count is
+$P=IH+HO$. There is no independent output-bias vector in this proposed encoding.
+
+\subsection{Conditions}
+\begin{table}[t]
+\caption{Proposed conditions. Replace parameters if the pilot changes them.}
+\label{tab:conditions}
+\centering
+\begin{tabular}{lll}
+\toprule
+Condition & Hidden neurons & Search\\
+\midrule
+Fixed small & 2, fixed & Weights\\
+Fixed large & 8, fixed & Weights\\
+Growing & 2 initially; cap 8 & Weights + node addition\\
+Random small & 2, fixed & Independent sampling\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The small fixed network controls for the growing network's starting capacity.
+The large fixed network tests whether additional capacity available from the
+start accounts for any improvement. Random search is a baseline using the small
+network representation and the same initialization distribution and evaluation
+budget. It does not separately characterize random search of the larger network.
+
+\subsection{Shared evolutionary algorithm}
+\todo{Person 1: replace the proposed description with the implemented pipeline.
+Specify mu/lambda, selection, tie handling, initialization distribution,
+mutation, evaluation caching, minimization and ARIEL EC integration.}
+
+The proposed EA uses tournament parent selection and $(\mu+\lambda)$ elitist
+survivor selection. Weight mutation independently perturbs each weight with
+probability $1/P$, adding Gaussian noise with standard deviation $\sigma$.
+The expected number of perturbed weights is therefore one, regardless of network
+size. Identical weight mutation and selection are used in all EA conditions.
+No crossover or speciation is included. Both NumPy and ARIEL random generators
+are seeded for each independent run.
+
+\subsection{Topology-growth operator}
+\todo{Person 2: confirm the operation order, cap behavior and validation. Describe
+exactly what changes and what remains fixed. Do not call this full NEAT.}
+
+After weight mutation, the proposed growing condition adds one hidden neuron
+with probability $p_{\mathrm{add}}$, unless the cap has been reached. The new
+incoming weights are sampled from the initialization distribution; its outgoing
+weights start at zero. Existing weights are preserved. Node addition alone
+therefore preserves the pre-addition controller function, while later weight
+mutations can give the new neuron an effect. Zero-weight connections count as
+connections. Ties are randomized rather than resolved in favor of smaller
+networks, allowing neutral additions to survive.
+
+This operator expands the width of one dense hidden layer. It does not add
+layers, remove nodes, introduce recurrent connections, or implement historical
+markings. Performance conclusions apply to this restricted form of growth.
+
+\subsection{Budget, repeats and analysis}
+\todo{Person 3, checked by both coders: insert the final parameter values,
+independent seeds, pilot choices, hardware and evaluation-budget accounting.}
+
+\begin{table}[t]
+\caption{Provisional settings to freeze after the pilot. These are not measured results.}
+\label{tab:settings}
+\centering
+\begin{tabular}{lr}
+\toprule
+Parameter & Proposed value\\
+\midrule
+Population $\mu$ / offspring $\lambda$ & 20 / 20\\
+Tournament size & 3\\
+Initialization SD & 0.5\\
+Weight-mutation SD $\sigma$ & 0.1\\
+Expected mutated weights & 1\\
+Node-addition probability & 0.1\\
+Evaluation budget per run & 1,020\\
+Independent final seeds & 0, 1, 2, 3, 4\\
+Simulation duration & 15 s\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Initialization evaluations are included in the budget. Evaluated survivors are
+cached; each newly simulated offspring consumes one evaluation. Random search
+uses the same total number of simulations and is logged in batches matching the
+EA's evaluation increments. Pilot seeds are kept separate from final seeds.
+Pilot runtime and plateau behavior determine a common final budget; all final
+runs use that cap instead of separate early stopping rules.
+
+For each condition, the analysis reports the mean and sample standard deviation
+of final best-so-far target distance across independent runs. Fitness curves
+summarize each run's best-so-far distance and then aggregate across seeds.
+Within-population spread is not used as a substitute for across-run variation.
+Both generation/batch and evaluation-count plots are retained. Population mean
+hidden-neuron and connection counts describe how topology develops.
+\todo{Explain any deviation from the proposal. With five repeats, prioritize
+effect sizes and variation; do not claim significance without a justified test.}
+
+\section{Results and Discussion}
+\subsection{Target-reaching performance}
+\todo{Person 3: insert actual per-condition means and sample SDs, state the
+budget, and compare growing against BOTH fixed conditions and the baseline.
+No results currently exist in this template.}
+
+\begin{figure}[t]
+\centering
+\figureplaceholder{fitness_generations.pdf}{Fitness across generations / random-search batches}
+\caption{Replace with observed mean best-so-far distance and $\pm$ one sample
+standard deviation across independent runs. State $n$, budget and whether any
+runs failed. Lower distance is better.}
+\label{fig:fitness}
+\end{figure}
+
+\begin{table}[t]
+\caption{Final best-so-far distance. Dashes are empty placeholders, not zeros.}
+\label{tab:results}
+\centering
+\begin{tabular}{lrrr}
+\toprule
+Condition & Runs & Mean (m) & SD (m)\\
+\midrule
+Fixed small & --- & --- & ---\\
+Fixed large & --- & --- & ---\\
+Growing & --- & --- & ---\\
+Random small & --- & --- & ---\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\todo{Use the evaluation-count plot as a second figure if it adds information;
+otherwise the generation plot already has identical evaluation increments.
+Show individual final seed values when useful and affordable within six pages.}
+
+\subsection{Topology development}
+\begin{figure}[t]
+\centering
+\figureplaceholder{topology_growth.pdf}{Hidden-neuron and connection counts across generations}
+\caption{Replace with measured population mean sizes, aggregated across runs.
+State whether growth reaches the cap and whether added capacity improves fitness.}
+\label{fig:topology}
+\end{figure}
+
+\todo{Person 2 supplies observations: do neurons survive after addition? Do new
+outgoing weights become useful? Does the best controller grow, or just the
+population? Distinguish correlation from evidence of a causal growth benefit.}
+
+\subsection{Interpretation and limitations}
+\todo{Answer the question using results, including negative or mixed outcomes.
+If growing beats small but matches large, additional capacity is a plausible
+explanation; avoid claiming staged growth is uniquely responsible. Discuss
+limited seed count, finite budget, one body/world, one-layer topology, hard cap,
+function-preserving initialization, and omitted NEAT mechanisms. Report whether
+curves plateau or the study remains budget-limited. Equal simulation counts do
+not guarantee equal computation time.}
+
+\section{Conclusions}
+\todo{Person 3: give a direct, qualified answer to the research question, supported
+by the final-distance and growth evidence. State the scope of the conclusion and
+one focused next experiment. Do not introduce new unreported results.}
+
+% Start references on a separate page so content pages can be counted clearly.
+\clearpage
+\begin{thebibliography}{9}
+\bibitem{stanley2002}
+Kenneth O. Stanley and Risto Miikkulainen. 2002.
+Evolving Neural Networks through Augmenting Topologies.
+\emph{Evolutionary Computation} 10, 2, 99--127.
+\url{https://nn.cs.utexas.edu/downloads/papers/stanley.ec02.pdf}
+
+\bibitem{lecture2026}
+Karine Miras. 2026. \emph{Neuroevolution}. Evolutionary Computing lecture slides,
+\texttt{EC\_NeuroEvolution\_2026\_v2.pdf}.
+
+\bibitem{assignment2026}
+Evolutionary Computing course. 2026.
+\emph{Standard Assignment -- Task II}. Assignment handout and
+\texttt{A2\_template\_2026.py}. Course materials.
+
+\bibitem{ariel}
+ARIEL contributors. \emph{ARIEL documentation}.
+\url{https://ci-group.github.io/ariel/}.
+% Add the actual code version/commit in Methods once confirmed by both coders.
+\end{thebibliography}
+\end{document}
