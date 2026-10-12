@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import numpy as np
+import time
 
 from common import ACTIVATIONS, Settings, clone_genome, run_ea, validate_genome
 
@@ -66,5 +67,63 @@ def run_fixed(condition: str, settings: Settings, output_dir: Path) -> dict:
 
 
 def run_random_search(settings: Settings, output_dir: Path) -> dict:
-    """TODO PERSON 1: budget-matched random search."""
-    raise NotImplementedError("Person 1: run_random_search")
+    if settings.evaluation_budget < 1:
+        raise ValueError("Budget must be positive")
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=False)
+    rng = np.random.default_rng(settings.seed)
+    set_seed(settings.seed)
+    condition = "random_small"
+    started = time.perf_counter()
+
+    model, input_size, output_size = prepare_simulation(settings)
+    evaluations = 0
+    best = None
+    rows = []
+
+    def evaluate_population(population: Population) -> Population:
+        nonlocal evaluations, best
+        for individual in population.alive:
+            if individual.requires_eval:
+                evaluations += 1
+                individual.fitness = evaluate_genome(individual.genotype, model, settings)
+                if best is None or individual.fitness < best["fitness"]:
+                    best = {"fitness": individual.fitness,
+                            "genome": clone_genome(individual.genotype)}
+        return population
+
+    def record_metrics(population: Population) -> Population:
+        distances = []
+        for individual in population.alive:
+            distances.append(individual.fitness)
+        rows.append({"condition": condition, "seed": settings.seed,
+                     "evaluations": evaluations, "best_distance": best["fitness"],
+                     "population_mean_distance": float(np.mean(distances)),
+                     "elapsed_seconds": time.perf_counter() - started})
+        return population
+
+    config = asdict(settings)
+    config["condition"] = condition
+    save_json(output_dir / "config.json", config)
+    
+    while evaluations < settings.evaluation_budget:
+        remaining = settings.evaluation_budget - evaluations
+        batch_size = min(settings.population_size, remaining)
+
+        indivs = Population([])
+        for _ in range(batch_size):
+            individual = Individual()
+            individual.genotype = initialize(input_size, output_size, rng)
+            indivs.append(individual)
+
+        evaluate_population(indivs)
+        record_metrics(indivs)
+
+    save_metrics(output_dir / "metrics.csv", rows)
+    save_json(output_dir / "best.json", best)
+    return {"condition": condition, "seed": settings.seed,
+            "evaluations": evaluations, "best_distance": best["fitness"],
+            "elapsed_seconds": time.perf_counter() - started}
+
+    # raise NotImplementedError("Person 1: run_random_search")
