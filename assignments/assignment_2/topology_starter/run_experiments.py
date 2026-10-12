@@ -10,14 +10,101 @@ import csv
 from dataclasses import replace
 from pathlib import Path
 
-from common import Settings
+from common import Settings, validate_genome
 from fixed import run_fixed, run_random_search
 from growing import run_growing
 
 CONDITIONS = ("fixed_small", "fixed_large", "growing", "random_small")
 
 
-def plot_results(root: Path) -> None:
+def plot_network(genome: dict, seed: int, distance: float, initial_hidden: int):
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Circle
+
+    validate_genome(genome)
+    symbols = {"tanh": r"$\tanh$", "sigmoid": r"$\sigma$",
+               "gaussian": r"$e^{-x^2}$", "sine": r"$\sin$"}
+    ni = genome["input_size"]
+    nh = genome["hidden_size"]
+    no = genome["output_size"]
+    height = max(ni, nh, no) - 1
+    input_y = np.linspace(height, 0, ni)
+    hidden_y = np.linspace(height, 0, nh)
+    output_y = np.linspace(height, 0, no)
+    wi = np.asarray(genome["w_in"])
+    wo = np.asarray(genome["w_out"])
+    scale = max(float(np.max(np.abs(wi))), float(np.max(np.abs(wo))), 1e-12)
+    fig, ax = plt.subplots(figsize=(8.5, max(8, height * 0.55 + 3)))
+    fig.subplots_adjust(left=0.05, right=0.95, top=0.87, bottom=0.19)
+
+    for weights, start_y, end_y, left, right in ((wi, input_y, hidden_y, 0, 4),
+                                               (wo, hidden_y, output_y, 4, 8)):
+        for i in range(weights.shape[0]):
+            for j in range(weights.shape[1]):
+                weight = weights[i, j]
+                if weight == 0:
+                    colour, width, alpha, style = "#9ca3af", 0.5, 0.35, ":"
+                else:
+                    colour = "#2474a8" if weight > 0 else "#c96d21"
+                    strength = abs(weight) / scale
+                    width, alpha, style = 0.4 + 1.8 * strength, 0.2 + 0.5 * strength, "-"
+                ax.plot([left, right], [start_y[i], end_y[j]], color=colour,
+                        linewidth=width, alpha=alpha, linestyle=style, zorder=1)
+
+    input_labels = []
+    if ni == 2 * no + 5:
+        for i in range(no):
+            input_labels.append(rf"$q_{{{i + 1}}}$")
+            input_labels.append(rf"$\dot{{q}}_{{{i + 1}}}$")
+        input_labels.extend(["target x", "target y", r"$\sin(2\pi ft)$",
+                             r"$\cos(2\pi ft)$", "bias = 1"])
+    else:
+        for i in range(ni):
+            input_labels.append(f"input {i + 1}")
+    for i, y in enumerate(input_y):
+        ax.add_patch(Circle((0, y), 0.23, facecolor="#edf2f7",
+                            edgecolor="#334155", zorder=3))
+        ax.text(-0.45, y, input_labels[i], ha="right", va="center", fontsize=11)
+    for i, y in enumerate(hidden_y):
+        style = "--" if i >= initial_hidden else "-"
+        ax.add_patch(Circle((4, y), 0.52, facecolor="white", edgecolor="#334155",
+                            linewidth=1.6, linestyle=style, zorder=3))
+        ax.text(4, y, symbols[genome["activations"][i]], ha="center", va="center",
+                fontsize=12, zorder=4)
+        ax.text(4, y - 0.65, f"H{i + 1}", ha="center", va="top", fontsize=10)
+    for i, y in enumerate(output_y):
+        ax.add_patch(Circle((8, y), 0.52, facecolor="#edf2f7",
+                            edgecolor="#334155", linewidth=1.6, zorder=3))
+        ax.text(8, y, r"$\tanh$", ha="center", va="center", fontsize=12, zorder=4)
+        ax.text(8.65, y, rf"$\theta_{{{i + 1}}}$", ha="left", va="center", fontsize=11)
+    for x, label in ((0, f"Inputs ({ni})"), (4, f"Hidden ({nh})"), (8, f"Outputs ({no})")):
+        ax.text(x, height + 1.1, label, ha="center", fontsize=12, fontweight="bold")
+    ax.set_xlim(-2.4, 9.4)
+    ax.set_ylim(-1.5, height + 1.8)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    fig.suptitle(f"Growing network - seed {seed}", fontsize=17, fontweight="bold", y=0.97)
+    fig.text(0.5, 0.935, f"Best evolved controller | remaining distance: {distance:.3f} m",
+             ha="center", fontsize=11)
+    handles = [Line2D([], [], color="#2474a8", label="Positive weight"),
+               Line2D([], [], color="#c96d21", label="Negative weight"),
+               Line2D([], [], color="#9ca3af", linestyle=":", label="Zero weight")]
+    fig.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.135),
+               ncol=3, frameon=False, fontsize=10)
+    fig.text(0.5, 0.11, "Connections flow left to right; thickness shows relative weight magnitude.",
+             ha="center", fontsize=10)
+    fig.text(0.5, 0.083, "Dashed neuron outline = added during evolution.",
+             ha="center", fontsize=10)
+    fig.text(0.5, 0.053, r"Activations: $\tanh(x)$   $\sigma(x)=1/(1+e^{-x})$   $e^{-x^2}$   $\sin(x)$",
+             ha="center", fontsize=11)
+    fig.text(0.5, 0.025, r"Inputs are normalized; target x/y are local. Outputs: $\theta=(\pi/2)\tanh(z)$.",
+             ha="center", fontsize=10)
+    return fig
+
+
+def plot_results(root: Path, conditions=CONDITIONS) -> None:
     """Aggregate complete independent runs only; never invent absent results."""
     import numpy as np
     import matplotlib
@@ -25,10 +112,14 @@ def plot_results(root: Path) -> None:
     matplotlib.rcParams["pdf.fonttype"] = 42
     import matplotlib.pyplot as plt
 
+    if not conditions or len(set(conditions)) != len(conditions):
+        raise ValueError("Select at least one condition without duplicates")
+
     grouped = {}
     reference_configs = {}
     summary = []
-    for condition in CONDITIONS:
+    networks = []
+    for condition in conditions:
         runs = []
         for path in sorted((root / condition).glob("seed_*/metrics.csv")):
             import json
@@ -57,6 +148,12 @@ def plot_results(root: Path) -> None:
             reference_configs[condition] = normalized
             if runs and not np.array_equal(matrix[:, :2], runs[0][1][:, :2]):
                 raise ValueError(f"Different logging grids within {condition}: {path}")
+            if condition == "growing":
+                best = json.loads(path.with_name("best.json").read_text())
+                validate_genome(best["genome"])
+                if not np.isclose(best["fitness"], matrix[-1, 2]):
+                    raise ValueError(f"Best controller does not match final metrics: {path}")
+                networks.append((int(config["seed"]), best, config["small_hidden_size"]))
             runs.append((int(config["seed"]), matrix))
         if len(runs) < 5:
             raise ValueError(f"{condition}: need at least 5 complete runs, found {len(runs)}")
@@ -69,20 +166,32 @@ def plot_results(root: Path) -> None:
                         "final_distance_sd": finals.std(ddof=1),
                         "final_distance_median": np.median(finals)})
 
-    reference = grouped["fixed_small"]
+    reference_condition = conditions[0]
+    reference = grouped[reference_condition]
     for condition, runs in grouped.items():
         if {s for s, _ in runs} != {s for s, _ in reference}:
             raise ValueError("Use the same independent seed list in every condition")
-        if reference_configs[condition] != reference_configs["fixed_small"]:
+        if reference_configs[condition] != reference_configs[reference_condition]:
             raise ValueError("Common experiment settings must match across conditions")
         if not np.array_equal(runs[0][1][:, :2], reference[0][1][:, :2]):
             raise ValueError("Use identical generation/evaluation logging grids")
 
+    labels = {"fixed_small": "Fixed small networks", "fixed_large": "Fixed large networks",
+              "growing": "Growing networks", "random_small": "Random search"}
+    label = labels[conditions[0]] if len(conditions) == 1 else "Controller comparison"
+    subtitle = f"{label} | Mean and shaded ±1 SD across {len(reference)} independent runs"
+    generation_label = "Generation"
+    if "random_small" in conditions:
+        generation_label = "Generation (random search: batch)"
+
     figures = root / "figures"
     figures.mkdir(parents=True, exist_ok=True)
-    for column, xlabel, filename in ((0, "Generation (random search: batch)", "fitness_generations"),
-                                     (1, "Fitness evaluations", "fitness_evaluations")):
-        fig, ax = plt.subplots(figsize=(6.3, 3.6), layout="constrained")
+    for column, xlabel, filename, title in (
+            (0, generation_label, "fitness_generations", "Best target distance across generations"),
+            (1, "Fitness evaluations", "fitness_evaluations", "Best target distance across evaluations")):
+        fig, ax = plt.subplots(figsize=(6.3, 4.0), layout="constrained")
+        fig.suptitle(title, fontsize=12, fontweight="bold")
+        ax.set_title(subtitle, fontsize=9, pad=10)
         for condition, runs in grouped.items():
             x = runs[0][1][:, column]
             y = np.stack([m[:, 2] for _, m in runs])
@@ -96,7 +205,11 @@ def plot_results(root: Path) -> None:
         fig.savefig(figures / f"{filename}.png", dpi=180)
         plt.close(fig)
 
-    fig, axes = plt.subplots(1, 2, figsize=(6.3, 3), layout="constrained")
+    fig, axes = plt.subplots(1, 2, figsize=(6.3, 3.8), layout="constrained")
+    fig.suptitle("Network size across generations", fontsize=12, fontweight="bold")
+    fig.supxlabel(subtitle, fontsize=9)
+    axes[0].set_title("Hidden neurons", fontsize=11)
+    axes[1].set_title("Connections", fontsize=11)
     for condition, runs in grouped.items():
         if condition == "random_small":
             continue
@@ -115,6 +228,11 @@ def plot_results(root: Path) -> None:
         writer = csv.DictWriter(stream, fieldnames=list(summary[0]))
         writer.writeheader()
         writer.writerows(summary)
+    for seed, best, initial_hidden in networks:
+        fig = plot_network(best["genome"], seed, best["fitness"], initial_hidden)
+        fig.savefig(figures / f"network_growing_seed_{seed}.pdf")
+        fig.savefig(figures / f"network_growing_seed_{seed}.png", dpi=180)
+        plt.close(fig)
     print(f"Saved verified summaries and figures in {figures}")
 
 
@@ -131,7 +249,7 @@ def main() -> None:
     parser.add_argument("--plot", action="store_true")
     args = parser.parse_args()
     if args.plot:
-        plot_results(args.output)
+        plot_results(args.output, args.conditions)
         return
     if len(set(args.seeds)) != len(args.seeds) or len(set(args.conditions)) != len(args.conditions):
         parser.error("Seeds and conditions must be unique")
