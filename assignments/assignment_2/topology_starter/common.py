@@ -114,6 +114,13 @@ def save_metrics(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
+def save_progress(output_dir: Path, settings: Settings, metrics: dict) -> None:
+    """Publish the last completed evaluation batch for local monitors."""
+    temporary = output_dir / "progress.json.tmp"
+    save_json(temporary, {**metrics, "evaluation_budget": settings.evaluation_budget})
+    temporary.replace(output_dir / "progress.json")
+
+
 def build_observations(model, data, settings: Settings) -> np.ndarray:
     observations = []
     for joint in range(model.njnt):
@@ -297,6 +304,7 @@ def run_ea(condition: str, settings: Settings, initialize: Callable,
                      "mean_connections": float(np.mean(connections)),
                      "best_hidden": best_hidden, "best_connections": best_connections,
                      "elapsed_seconds": time.perf_counter() - started})
+        save_progress(output_dir, settings, rows[-1])
         return population
 
     initial = Population([])

@@ -1,5 +1,8 @@
 ### PROJECT #####################################################################
 */assignment_2/*/results/*
+# Local experiment launcher and terminal progress monitor
+/assignments/assignment_2/topology_starter/run_remaining_experiments.py
+/assignments/assignment_2/topology_starter/monitor_runs.py
 # Videos
 *.mp4
 # Dirs

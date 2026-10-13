@@ -205,6 +205,57 @@ def plot_results(root: Path, conditions=CONDITIONS) -> None:
         fig.savefig(figures / f"{filename}.png", dpi=180)
         plt.close(fig)
 
+    seed_ids = sorted(seed for seed, _ in reference)
+    finals = {condition: {seed: matrix[-1, 2] for seed, matrix in runs}
+              for condition, runs in grouped.items()}
+    fig, ax = plt.subplots(figsize=(6.3, 4.0), layout="constrained")
+    fig.suptitle("Final target distance by controller", fontsize=12, fontweight="bold")
+    ax.set_title(f"{len(seed_ids)} matched seeds | Dots are runs; boxes show median and quartiles",
+                 fontsize=9, pad=10)
+    positions = np.arange(1, len(conditions) + 1)
+    values = [[finals[condition][seed] for seed in seed_ids] for condition in conditions]
+    boxes = ax.boxplot(values, tick_labels=[c.replace("_", " ") for c in conditions],
+                       patch_artist=True, showfliers=False)
+    colours = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    for index, box in enumerate(boxes["boxes"]):
+        box.set_facecolor(colours[index % len(colours)])
+        box.set_alpha(.25)
+    offsets = np.linspace(-.12, .12, len(seed_ids))
+    for index, seed in enumerate(seed_ids):
+        ax.plot(positions + offsets[index], [finals[c][seed] for c in conditions],
+                color="#64748b", linewidth=.6, alpha=.35, zorder=1)
+    for index, distances in enumerate(values):
+        ax.scatter(positions[index] + offsets, distances, s=24,
+                   color=colours[index % len(colours)], zorder=3)
+    ax.set(ylabel="Final target distance (m; lower is better)")
+    ax.grid(axis="y", alpha=.2)
+    fig.savefig(figures / "final_distances.pdf")
+    fig.savefig(figures / "final_distances.png", dpi=180)
+    plt.close(fig)
+
+    fixed_conditions = [c for c in conditions if c in ("fixed_small", "fixed_large")]
+    if "growing" in finals and fixed_conditions:
+        fig, axes = plt.subplots(1, len(fixed_conditions),
+                                 figsize=(3.4 * len(fixed_conditions), 4.0),
+                                 layout="constrained", squeeze=False, sharey=True)
+        fig.suptitle("Growing versus fixed: differences for each seed", fontsize=12,
+                     fontweight="bold")
+        fig.supxlabel("Positive differences favour growing; negative differences favour fixed",
+                      fontsize=9)
+        for ax, condition in zip(axes[0], fixed_conditions):
+            differences = [finals[condition][seed] - finals["growing"][seed]
+                           for seed in seed_ids]
+            ax.bar(np.arange(len(seed_ids)), differences,
+                   color=["#59a14f" if delta >= 0 else "#f28e2b" for delta in differences])
+            ax.axhline(0, color="#334155", linewidth=.8)
+            ax.set_title(labels[condition], fontsize=10)
+            ax.set(xlabel="Seed", xticks=np.arange(len(seed_ids)), xticklabels=seed_ids)
+            ax.grid(axis="y", alpha=.2)
+        axes[0, 0].set_ylabel("Fixed − growing final distance (m)")
+        fig.savefig(figures / "growing_vs_fixed.pdf")
+        fig.savefig(figures / "growing_vs_fixed.png", dpi=180)
+        plt.close(fig)
+
     fig, axes = plt.subplots(1, 2, figsize=(6.3, 3.8), layout="constrained")
     fig.suptitle("Network size across generations", fontsize=12, fontweight="bold")
     fig.supxlabel(subtitle, fontsize=9)

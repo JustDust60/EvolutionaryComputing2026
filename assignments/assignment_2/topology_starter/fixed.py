@@ -1,10 +1,14 @@
 """Fixed networks and the random-search baseline."""
 
+from dataclasses import asdict
 from pathlib import Path
 import numpy as np
 import time
 
-from common import ACTIVATIONS, Settings, clone_genome, run_ea, validate_genome
+from ariel.ec import Individual, Population, set_seed
+from common import (ACTIVATIONS, Settings, clone_genome, evaluate_genome,
+                    network_size, prepare_simulation, run_ea, save_json,
+                    save_metrics, save_progress, validate_genome)
 
 
 def initialize_fixed(input_size: int, output_size: int, hidden_size: int,
@@ -67,8 +71,11 @@ def run_fixed(condition: str, settings: Settings, output_dir: Path) -> dict:
 
 
 def run_random_search(settings: Settings, output_dir: Path) -> dict:
-    if settings.evaluation_budget < 1:
-        raise ValueError("Budget must be positive")
+    if min(settings.population_size, settings.offspring_size) < 1:
+        raise ValueError("Population and offspring sizes must be positive")
+    remaining = settings.evaluation_budget - settings.population_size
+    if remaining < 0 or remaining % settings.offspring_size:
+        raise ValueError("Budget must include initialization and whole offspring batches")
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=False)
@@ -95,26 +102,37 @@ def run_random_search(settings: Settings, output_dir: Path) -> dict:
 
     def record_metrics(population: Population) -> Population:
         distances = []
+        hidden_sizes = []
+        connections = []
         for individual in population.alive:
+            hidden, edges = network_size(individual.genotype)
             distances.append(individual.fitness)
+            hidden_sizes.append(hidden)
+            connections.append(edges)
+        best_hidden, best_connections = network_size(best["genome"])
         rows.append({"condition": condition, "seed": settings.seed,
+                     "generation": len(rows),
                      "evaluations": evaluations, "best_distance": best["fitness"],
                      "population_mean_distance": float(np.mean(distances)),
+                     "mean_hidden": float(np.mean(hidden_sizes)),
+                     "mean_connections": float(np.mean(connections)),
+                     "best_hidden": best_hidden, "best_connections": best_connections,
                      "elapsed_seconds": time.perf_counter() - started})
+        save_progress(output_dir, settings, rows[-1])
         return population
 
     config = asdict(settings)
     config["condition"] = condition
     save_json(output_dir / "config.json", config)
-    
     while evaluations < settings.evaluation_budget:
-        remaining = settings.evaluation_budget - evaluations
-        batch_size = min(settings.population_size, remaining)
+        batch_size = settings.population_size if evaluations == 0 else settings.offspring_size
 
         indivs = Population([])
         for _ in range(batch_size):
             individual = Individual()
-            individual.genotype = initialize(input_size, output_size, rng)
+            individual.genotype = initialize_fixed(input_size, output_size,
+                                                   settings.small_hidden_size, settings, rng)
+            individual.requires_eval = True
             indivs.append(individual)
 
         evaluate_population(indivs)
@@ -125,5 +143,3 @@ def run_random_search(settings: Settings, output_dir: Path) -> dict:
     return {"condition": condition, "seed": settings.seed,
             "evaluations": evaluations, "best_distance": best["fitness"],
             "elapsed_seconds": time.perf_counter() - started}
-
-    # raise NotImplementedError("Person 1: run_random_search")
