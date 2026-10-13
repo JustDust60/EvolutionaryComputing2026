@@ -1,4 +1,4 @@
-"""Provided runner. Algorithm functions intentionally remain student TODOs.
+"""Provided runner.
 
 Run experiments with the existing ARIEL environment. --plan prints the matrix
 without simulation; --plot makes report figures once metrics.csv files exist.
